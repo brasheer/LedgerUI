@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LedgerUI v1.0.0</title>
+  <meta name="theme-color" id="metaThemeColor" content="#0f172a">
+  <meta name="description" content="Local-first IndexedDB + JSON store team ledger, shared queue coordinator, and CSV/XLSX exporter">
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/svg+xml" href="assets/icons/icon.svg">
+  <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
+  <link rel="stylesheet" href="css/styles.css?v=1.0.0">
+</head>
+<body>
+
+  <header class="app-header">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="2.5" y="3" width="15" height="14" rx="2.5"></rect>
+          <line x1="2.5" y1="7.5" x2="17.5" y2="7.5"></line>
+          <line x1="7.5" y1="7.5" x2="7.5" y2="17"></line>
+        </svg>
+      </div>
+      <h1>LedgerUI</h1>
+      <span class="version-tag" id="appVersionTag">v1.0.0</span>
+      <span class="ledger-binding-chip" id="ledgerBindingChip" title="Explicit Ledger Binding ID">No Ledger Connected</span>
+    </div>
+
+    <div class="header-actions">
+      <button type="button" id="btnReconnectRoot" class="btn-secondary" style="display:none;">
+        🔄 Reconnect Team Root
+      </button>
+      <button type="button" id="btnConnectRoot" class="btn-primary">
+        📂 Connect Team Root
+      </button>
+      <button type="button" id="btnSyncNow" class="btn-secondary" disabled title="Scan _ViewOnly_JSON/, _SharedQueue/, and _Ledger/ incrementally">
+        🔄 Sync Now
+      </button>
+
+      <div class="auto-refresh-wrap" title="Automatic incremental sync interval">
+        <label for="autoRefreshSelect">Auto</label>
+        <select id="autoRefreshSelect">
+          <option value="0">Off</option>
+          <option value="60">1m</option>
+          <option value="180" selected>3m</option>
+          <option value="300">5m</option>
+        </select>
+      </div>
+
+      <!-- Export Popover Menu -->
+      <div class="menu-wrap" id="exportMenuWrap">
+        <button type="button" id="btnExportMenu" class="btn-secondary" disabled>
+          📤 Export ▾
+        </button>
+        <div id="exportMenuDropdown" class="menu-dropdown">
+          <div class="menu-section">
+            <div class="menu-section-title">CSV Exports (UTF-8 BOM)</div>
+            <button type="button" id="btnExportFilteredCsv" class="menu-item">Export Current Filtered View (.csv)</button>
+            <button type="button" id="btnExportFullCsv" class="menu-item">Export Full Ledger (.csv)</button>
+          </div>
+          <div class="menu-section">
+            <div class="menu-section-title">Excel Exports (Multi-Tab .xlsx)</div>
+            <button type="button" id="btnExportFilteredXlsx" class="menu-item">Export Current Filtered View (.xlsx)</button>
+            <button type="button" id="btnExportFullXlsx" class="menu-item">Export Full Ledger (.xlsx)</button>
+          </div>
+          <div class="menu-section">
+            <label class="menu-checkbox">
+              <input type="checkbox" id="chkExportIncludeMeta" checked>
+              <span>Include Metadata &amp; Overlays (UUID, Agent, Carries, Tags)</span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <!-- Setup Popover Menu (Appearance & Display at Top) -->
+      <div class="menu-wrap" id="setupMenuWrap">
+        <button type="button" id="btnSetupMenu" class="btn-secondary">
+          ⚙️ Setup ▾
+        </button>
+        <div id="setupMenuDropdown" class="menu-dropdown">
+          <div class="menu-section">
+            <div class="menu-section-header">
+              <span class="menu-section-title">Appearance &amp; Display</span>
+              <span id="menuThemeHint" class="menu-hint">Auto</span>
+            </div>
+            <div class="theme-segmented" id="menuThemeGroup" role="group" aria-label="Theme preference">
+              <button type="button" class="theme-seg-btn" data-theme-choice="light">Light</button>
+              <button type="button" class="theme-seg-btn active" data-theme-choice="auto">Auto</button>
+              <button type="button" class="theme-seg-btn" data-theme-choice="dark">Dark</button>
+            </div>
+            <div class="font-scale-row">
+              <label for="fontSizeSlider">Text Size</label>
+              <button type="button" id="btnFontDecrease" class="btn-step">A−</button>
+              <input type="range" id="fontSizeSlider" min="85" max="125" step="5" value="100">
+              <button type="button" id="btnFontIncrease" class="btn-step">A+</button>
+              <span id="fontSizeValue" class="font-scale-val">100%</span>
+            </div>
+          </div>
+
+          <div class="menu-section">
+            <div class="menu-section-title">Actor Identity &amp; Local Cache</div>
+            <button type="button" id="btnActorIdentity" class="menu-item">
+              <span id="menuActorIdentityLabel">Set Actor Name &amp; UUID...</span>
+            </button>
+            <button type="button" id="btnRebuildIdb" class="menu-item" disabled title="Clear local IndexedDB cache and re-ingest all JSON files from disk">
+              🗄️ Rebuild IndexedDB Cache...
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Primary Workspace Switcher Tabs -->
+  <nav class="workspace-tabs-bar" aria-label="LedgerUI Workspace Views">
+    <button type="button" id="tabLedgerView" class="ws-tab active">
+      📊 Team Ledger <span id="ledgerCountPill" class="tab-pill">0</span>
+    </button>
+    <button type="button" id="tabQueueView" class="ws-tab">
+      📥 Shared Request Queue <span id="queueOpenBadge" class="tab-pill tab-pill-accent" style="display:none;">0</span>
+    </button>
+  </nav>
+
+  <!-- View 1: Team Ledger -->
+  <main id="ledgerViewSection" class="main-section">
+    <section id="kpiGrid" class="kpi-grid"></section>
+
+    <div id="categoryPillsBar" class="category-pills-bar" style="display:none;"></div>
+
+    <div class="controls-bar">
+      <select id="filterAgentSelect" aria-label="Filter by Agent">
+        <option value="__ALL__">All Agents</option>
+      </select>
+      <select id="filterWorkbookSelect" aria-label="Filter by Workbook">
+        <option value="__ALL__">All Workbooks</option>
+      </select>
+      <select id="filterStatusSelect" aria-label="Filter by Status">
+        <option value="__ALL__">All Statuses</option>
+      </select>
+      <select id="filterTagSelect" aria-label="Filter by Ledger Tag">
+        <option value="__ALL__">All Tags</option>
+      </select>
+      <label class="toggle-chip">
+        <input type="checkbox" id="chkFlaggedOnly">
+        <span>🚩 Flagged Only</span>
+      </label>
+      <label class="toggle-chip">
+        <input type="checkbox" id="chkHideCompleted">
+        <span>Hide Completed</span>
+      </label>
+      <input type="text" id="ledgerSearchInput" class="search-box" placeholder="Search Subject, Ticket #, Broker, Master #, Yard, Lot #, Notes, Tags, Agent, or UUID...">
+      <button type="button" id="btnClearFilters" class="btn-secondary btn-sm" style="display:none;">✕ Clear Filters</button>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead id="ledgerTableHead">
+          <tr>
+            <th data-sort="status" class="sortable">Status</th>
+            <th>Tags / Flag</th>
+            <th data-sort="subject" class="sortable">Subject</th>
+            <th data-sort="ticketNumber" class="sortable">Ticket #</th>
+            <th data-sort="brokerName" class="sortable">Broker / Master #</th>
+            <th data-sort="actionCategory" class="sortable">Action &amp; Category</th>
+            <th>Yard / Lots</th>
+            <th data-sort="agentName" class="sortable">Agent</th>
+            <th data-sort="lastSeenDate" class="sortable">Carries / Last Seen</th>
+            <th>Details</th>
+          </tr>
+        </thead>
+        <tbody id="ledgerTableBody">
+          <tr><td colspan="10" class="empty-cell">Click <strong>📂 Connect Team Root</strong> to index your team's <code>_ViewOnly_JSON/</code> mirrors into IndexedDB.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </main>
+
+  <!-- View 2: Shared Request Queue -->
+  <section id="queueViewSection" class="main-section" style="display:none;">
+    <div class="queue-header-bar">
+      <div>
+        <h2>Shared Request Queue (<code>_SharedQueue/</code>)</h2>
+        <p class="subtitle">Publish unassigned tickets to <code>_SharedQueue/items/</code> and monitor deterministic agent claims.</p>
+      </div>
+      <div class="queue-header-actions">
+        <button type="button" id="btnToggleQueuePostForm" class="btn-primary">＋ Post Ticket to Queue</button>
+      </div>
+    </div>
+
+    <form id="queuePostForm" class="queue-post-form" style="display:none;">
+      <div class="form-grid">
+        <div class="form-group full">
+          <label for="qSubject">Email Subject / Title *</label>
+          <input type="text" id="qSubject" required placeholder="e.g., [2026-11-0999] Expedite title release">
+        </div>
+        <div class="form-group">
+          <label for="qTicket">Ticket Number</label>
+          <input type="text" id="qTicket" placeholder="e.g., 2026-11-0999">
+        </div>
+        <div class="form-group">
+          <label for="qPriority">Priority</label>
+          <select id="qPriority">
+            <option value="Normal" selected>Normal</option>
+            <option value="High">High</option>
+            <option value="Urgent">Urgent</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="qBroker">Broker Name</label>
+          <input type="text" id="qBroker" placeholder="Broker Name">
+        </div>
+        <div class="form-group">
+          <label for="qMaster">Master #</label>
+          <input type="text" id="qMaster" placeholder="Master #">
+        </div>
+        <div class="form-group">
+          <label for="qBidder">Bidder #</label>
+          <input type="text" id="qBidder" placeholder="Bidder #">
+        </div>
+        <div class="form-group">
+          <label for="qAction">Requested Action</label>
+          <input type="text" id="qAction" placeholder="Requested Action">
+        </div>
+        <div class="form-group">
+          <label for="qYard">Yard #</label>
+          <input type="text" id="qYard" placeholder="Yard #">
+        </div>
+        <div class="form-group">
+          <label for="qLots">Lot Numbers</label>
+          <input type="text" id="qLots" placeholder="Comma-separated Lot #s">
+        </div>
+        <div class="form-group full">
+          <label for="qNotes">Notes</label>
+          <textarea id="qNotes" rows="2" placeholder="Context or instructions for the claiming agent..."></textarea>
+        </div>
+      </div>
+      <div class="form-actions">
+        <button type="button" id="btnCancelQueuePost" class="btn-secondary">Cancel</button>
+        <button type="submit" class="btn-primary">📤 Publish Ticket to _SharedQueue/</button>
+      </div>
+    </form>
+
+    <div class="controls-bar">
+      <select id="queueFilterSelect" aria-label="Filter queue status">
+        <option value="open">Open (Unclaimed)</option>
+        <option value="claimed">Claimed</option>
+        <option value="all">All Queue Items</option>
+      </select>
+      <input type="text" id="queueSearchInput" class="search-box" placeholder="Search queue subject, ticket #, broker, lot #, or claiming agent...">
+      <span id="queueStatsLabel" class="subtitle">0 open • 0 claimed</span>
+    </div>
+
+    <div id="queueListContainer" class="queue-list-container">
+      <div class="empty-cell">Connect a Team Root folder to view <code>_SharedQueue/</code>.</div>
+    </div>
+  </section>
+
+  <!-- Record Details, Chronological Timeline & Removable-Tag Overlays Modal -->
+  <div id="recordDetailModal" class="modal-backdrop">
+    <div class="modal modal-xl">
+      <div class="modal-header">
+        <div>
+          <h3 id="detailSubjectTitle">Request Details</h3>
+          <div id="detailSubtitle" class="subtitle"></div>
+        </div>
+        <span id="detailStatusBadge" class="badge">Status</span>
+      </div>
+
+      <div class="detail-grid">
+        <div class="detail-panel">
+          <h4>Record Metadata (Read-Only from Agent Mirror)</h4>
+          <dl id="detailMetaList" class="detail-dl"></dl>
+          <h4>Chronological Timeline</h4>
+          <div id="detailTimelineList" class="timeline-list"></div>
+        </div>
+
+        <div class="detail-panel overlay-panel">
+          <h4>Ledger Overlays (<code>_Ledger/</code> — Non-Destructive)</h4>
+          <label class="toggle-chip" style="margin-bottom:0.75rem;">
+            <input type="checkbox" id="overlayFlaggedCheck">
+            <span>🚩 Flagged for Follow-Up</span>
+          </label>
+
+          <div class="form-group">
+            <label>Tags (100% Removable — Click ✕ to Delete)</label>
+            <div id="overlayTagsChips" class="tags-editor-chips"></div>
+            <div class="tag-add-row">
+              <input type="text" id="overlayNewTagInput" list="knownTagsList" placeholder="Add a tag (e.g., Priority, Escalate, Audit-OK)...">
+              <datalist id="knownTagsList"></datalist>
+              <button type="button" id="btnAddOverlayTag" class="btn-secondary btn-sm">＋ Add</button>
+            </div>
+          </div>
+
+          <div class="form-group" style="margin-top:0.85rem;">
+            <label for="overlayNoteInput">Ledger / Coordinator Note</label>
+            <textarea id="overlayNoteInput" rows="4" placeholder="Add ledger-level notes without modifying the agent's workbook..."></textarea>
+          </div>
+
+          <div class="form-actions" style="margin-top:0.85rem;">
+            <button type="button" id="btnSaveOverlay" class="btn-primary">💾 Save Ledger Overlay</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-actions">
+        <button type="button" id="btnCloseRecordDetail" class="btn-primary">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Actor Identity Modal -->
+  <div id="actorIdentityModal" class="modal-backdrop">
+    <div class="modal">
+      <div class="modal-header">
+        <div>
+          <h3>Actor Identity (<code>_Ledger/</code> &amp; <code>_SharedQueue/</code>)</h3>
+          <div class="subtitle">Partitions your overlay files so multiple coordinators never overwrite each other</div>
+        </div>
+      </div>
+      <form id="actorIdentityForm">
+        <div class="form-group">
+          <label for="actorNameInput">Your Name *</label>
+          <input type="text" id="actorNameInput" required placeholder="e.g., Alex Rivera">
+        </div>
+        <div class="form-group" style="margin-top:0.75rem;">
+          <label for="actorUuidInput">Actor UUIDv4</label>
+          <input type="text" id="actorUuidInput" readonly>
+        </div>
+        <div class="modal-actions">
+          <button type="button" id="btnCloseActorIdentity" class="btn-secondary">Cancel</button>
+          <button type="submit" class="btn-primary">Save Actor Identity</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="toastContainer" class="toast-container"></div>
+
+  <footer class="status-bar">
+    <div class="status-left">
+      <span id="statusPill" class="status-pill">Not Connected</span>
+      <span id="statusTelemetry" class="status-meta">0 mirrors • 0 records</span>
+    </div>
+    <div class="status-right">
+      <span id="statusLastSync" class="status-meta">Waiting for Team Root...</span>
+      <span class="status-divider">•</span>
+      <span class="status-meta">LedgerUI v1.0.0</span>
+    </div>
+  </footer>
+
+  <script src="js/db.js?v=1.0.0"></script>
+  <script src="js/sync-engine.js?v=1.0.0"></script>
+  <script src="js/exporter.js?v=1.0.0"></script>
+  <script src="js/app.js?v=1.0.0"></script>
+</body>
+</html>

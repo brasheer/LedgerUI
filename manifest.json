@@ -1,0 +1,17 @@
+{
+  "name": "LedgerUI — Team Ledger & Shared Queue Appliance",
+  "short_name": "LedgerUI",
+  "description": "Local-first IndexedDB + JSON NoSQL team ledger, shared request queue coordinator, and CSV/XLSX exporter for TrackerUI.",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "icons": [
+    {
+      "src": "assets/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
