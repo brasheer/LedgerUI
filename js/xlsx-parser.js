@@ -96,8 +96,8 @@
       if (Array.isArray(val.richText)) {
         return val.richText.map((part) => (part && part.text ? String(part.text) : '')).join('').trim();
       }
-      if ('result' in val && (val.formula || val.sharedFormula)) {
-        return extractCellText(val.result);
+      if ('formula' in val || 'sharedFormula' in val) {
+        return 'result' in val ? extractCellText(val.result) : '';
       }
       if ('text' in val || 'hyperlink' in val) {
         return String(val.text || val.hyperlink || '').trim();
@@ -105,9 +105,10 @@
       if ('error' in val) {
         return '';
       }
-      return String(val).trim();
+      return '';
     }
-    return String(val).trim();
+    const str = String(val).trim();
+    return str === '[object Object]' ? '' : str;
   }
 
   function stableHashId(input) {

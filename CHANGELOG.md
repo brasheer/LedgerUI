@@ -2,6 +2,11 @@
 
 ## Version Release History
 
+### `v1.1.3`
+- **🧹 Blank Template Formula Row Fix (`js/xlsx-parser.js`, `js/sync-engine.js`)**:
+  - Fixed `extractCellText()` so ExcelJS `formula` / `sharedFormula` cells without a cached `result` (and legacy `"[object Object]"` placeholder strings on blank template rows) resolve to `""` instead of `"[object Object]"`.
+  - Prevents blank `.xlsx` template rows from being ingested as phantom `(No Subject)` / `[object Object]` entries and bumps `PARSER_VERSION` to `4` so IndexedDB automatically clears and re-parses cached `.xlsx` workbooks on next sync.
+
 ### `v1.1.2`
 - **👤 Agent Column First & UUID-Deduplicated Active Totals (`index.html`, `js/app.js`, `sw.js`)**:
   - Moved the **Agent** column to the far left of the Team Ledger table so request ownership is immediately visible.

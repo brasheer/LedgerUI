@@ -3,7 +3,7 @@
 // ============================================================================
 (() => {
   const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-  const PARSER_VERSION = 3;
+  const PARSER_VERSION = 4;
 
   const KNOWN_STATUS_RE = /^(new|pending|in\s*progress|waiting(?:\s+on\s+[a-z0-9\s/_-]+)?|on\s*hold|overdue|escalated|complete|completed|closed|done|resolved|open|active|cancelled|canceled)$/i;
   const DATE_PREFIX_STRIP_RE = /^\[\d{1,2}[-/]\d{1,2}[-/]\d{2,4}(?:\s+\d{1,2}:\d{2}(?:\s*[AP]M)?)?\]\s*/i;
