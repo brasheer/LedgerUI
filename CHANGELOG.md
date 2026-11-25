@@ -2,6 +2,24 @@
 
 ## Version Release History
 
+### `v1.1.2`
+- **👤 Agent Column First & UUID-Deduplicated Active Totals (`index.html`, `js/app.js`, `sw.js`)**:
+  - Moved the **Agent** column to the far left of the Team Ledger table so request ownership is immediately visible.
+  - Added `deduplicateRecordsByUuid()` in `reloadFromIndexedDB()` so each unique `trackingUuid` is counted once using its latest chronological state (preventing an open entry from an earlier date/workbook from inflating **Open / Active**, **Overdue**, or **Waiting / Hold** totals once the request is closed at a later date).
+
+### `v1.1.1`
+- **🩹 Swapped Status/Notes Mirror Repair & TrackerUI Header Normalization (`js/sync-engine.js`, `js/xlsx-parser.js`, `css/styles.css`)**:
+  - Automatically detects and repairs `mirror_*.json` payloads where TrackerUI exported `Action Taken/Notes` into `status` and `Status` into `notes` (updating `status`, `notes`, `timeline[]`, and `isOverdue`), and bumps `PARSER_VERSION` to `3` so IndexedDB re-ingests cached records cleanly.
+  - Expanded `.xlsx` header matching for standard TrackerUI 12-column and Dept 2 custom workbooks (`Email/Call Subject`, `Broker Master#`, `Broker Bidder#`, `Action Taken/Notes`), added `inferActionCategory()`, skipped auxiliary sheets (`Master Accounts`, `Validation List`) when date tabs exist, and prevented duplicate `[date]` prefixes on timestamped notes.
+  - Scoped `#ledgerTableBody .badge` truncation (`max-width: 180px`) with full-text `title` tooltips on status pills.
+
+### `v1.1.0`
+- **📂 Multi-Folder Aggregation (`Trackers/`, `Agents/`, `View Only/`) & `.xlsx` Workbook Fallback (`js/xlsx-parser.js`, `js/sync-engine.js`)**:
+  - Added client-side ExcelJS `.xlsx` workbook parser (`window.LedgerXlsxParser`) that reads `TrackerConfig`, detects headers and hidden Column K `trackingUuid` values, and aggregates daily rollover sheets into chronological `timeline[]` records.
+  - Upgraded `sync-engine.js` to auto-detect Team Root (`Trackers/`), `Agents/`, `View Only/` / `_ViewOnly_JSON/`, and direct folders without creating stray `_Config/`, `_Ledger/`, or `_SharedQueue/` folders inside subfolders.
+  - Added two-phase ingestion prioritizing `_ViewOnly_JSON/mirror_*.json`, deduplicating primary `.xlsx` vs `(VIEW ONLY).xlsx` copies per agent+workbook, and falling back to `(VIEW ONLY).xlsx` when a live `.xlsx` is locked.
+  - Added automatic `ledgerId` adoption from existing mirrors on first Team Root setup, plus actionable empty-state diagnostics and a 1-click **Adopt Existing Ledger ID** action when mismatches occur (`js/app.js`, `sw.js`, `index.html`).
+
 ### `v1.0.0` (Initial Release)
 - **📦 Zero-Build PWA Shell & Shared Data Contract (`index.html`, `css/styles.css`, `manifest.json`, `sw.js`, `CONTRACT.md`)**:
   - Established standalone modular Vanilla HTML/CSS/JS PWA architecture synced with **TrackerUI** via [`CONTRACT.md`](CONTRACT.md) (`v1.0`).

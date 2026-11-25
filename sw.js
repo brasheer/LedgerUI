@@ -1,9 +1,10 @@
-const CACHE_NAME = 'ledger-ui-v1';
+const CACHE_NAME = 'ledger-ui-v1.1.2';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
   './css/styles.css',
   './js/db.js',
+  './js/xlsx-parser.js',
   './js/sync-engine.js',
   './js/exporter.js',
   './js/app.js',
@@ -47,7 +48,7 @@ self.addEventListener('message', (event) => {
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
   event.respondWith(
-    caches.match(event.request).then((cached) => {
+    caches.match(event.request, { ignoreSearch: true }).then((cached) => {
       return cached || fetch(event.request);
     })
   );

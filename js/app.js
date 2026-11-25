@@ -10,6 +10,8 @@
   let rootDirHandle = null;
   let cachedRootHandle = null;
   let activeManifest = null;
+  let lastSyncResult = null;
+  let activeConnectionMode = 'team-root';
   let allRecords = [];
   let overlaysMap = new Map();
   let queueItems = [];
@@ -153,13 +155,111 @@
     return /^(complete|completed|closed|done|resolved)$/i.test(String(st || '').trim());
   }
 
+  function parseRecordDateMs(dateStr) {
+    const raw = String(dateStr || '').trim();
+    if (!raw) return 0;
+    // MM-DD-YYYY or MM/DD/YYYY
+    let m = raw.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})$/);
+    if (m) {
+      let y = parseInt(m[3], 10);
+      if (m[3].length === 2) y += y >= 70 ? 1900 : 2000;
+      return Date.UTC(y, parseInt(m[1], 10) - 1, parseInt(m[2], 10));
+    }
+    // YYYY-MM-DD
+    m = raw.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+    if (m) {
+      return Date.UTC(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10));
+    }
+    const parsed = Date.parse(raw);
+    return isNaN(parsed) ? 0 : parsed;
+  }
+
+  function compareRecordRecency(a, b) {
+    const dA = parseRecordDateMs(a.lastSeenDate || a.latestSheetName);
+    const dB = parseRecordDateMs(b.lastSeenDate || b.latestSheetName);
+    if (dA !== dB) return dA - dB;
+    const compA = isCompletedStatus(a.status) ? 1 : 0;
+    const compB = isCompletedStatus(b.status) ? 1 : 0;
+    if (compA !== compB) return compA - compB;
+    const expA = Date.parse(a.exportedAt || '') || 0;
+    const expB = Date.parse(b.exportedAt || '') || 0;
+    if (expA !== expB) return expA - expB;
+    return Number(a.carryCount || 0) - Number(b.carryCount || 0);
+  }
+
+  function deduplicateRecordsByUuid(records) {
+    const byUuid = new Map();
+    for (const rec of (Array.isArray(records) ? records : [])) {
+      if (!rec) continue;
+      const key = String(rec.trackingUuid || '').trim().toLowerCase() || rec.compositeId;
+      if (!key) continue;
+      if (!byUuid.has(key)) {
+        byUuid.set(key, [rec]);
+      } else {
+        byUuid.get(key).push(rec);
+      }
+    }
+
+    const deduped = [];
+    for (const group of byUuid.values()) {
+      if (group.length === 1) {
+        const single = group[0];
+        deduped.push(
+          isCompletedStatus(single.status) && single.isOverdue
+            ? { ...single, isOverdue: false }
+            : single
+        );
+        continue;
+      }
+
+      const sorted = [...group].sort(compareRecordRecency);
+      const winner = sorted[sorted.length - 1];
+
+      // Earliest firstSeenDate across all appearances of this UUID
+      let earliestFirstSeen = winner.firstSeenDate || '';
+      let earliestFirstMs = parseRecordDateMs(earliestFirstSeen) || Number.MAX_SAFE_INTEGER;
+      const timelineMap = new Map();
+      const distinctDates = new Set();
+
+      for (const item of sorted) {
+        const fMs = parseRecordDateMs(item.firstSeenDate);
+        if (fMs > 0 && fMs < earliestFirstMs) {
+          earliestFirstMs = fMs;
+          earliestFirstSeen = item.firstSeenDate;
+        }
+        for (const t of (Array.isArray(item.timeline) ? item.timeline : [])) {
+          const tKey = `${t.date || t.sheetName || ''}::${t.sheetName || ''}::${t.rowNumber || ''}`;
+          timelineMap.set(tKey, t);
+          if (t.date || t.sheetName) distinctDates.add(t.date || t.sheetName);
+        }
+      }
+
+      const mergedTimeline = Array.from(timelineMap.values()).sort(
+        (a, b) => parseRecordDateMs(a.date || a.sheetName) - parseRecordDateMs(b.date || b.sheetName)
+      );
+      const maxCarry = Math.max(
+        Number(winner.carryCount || 1),
+        distinctDates.size || 0
+      );
+
+      deduped.push({
+        ...winner,
+        firstSeenDate: earliestFirstSeen || winner.firstSeenDate || '',
+        carryCount: maxCarry,
+        timeline: mergedTimeline.length > 0 ? mergedTimeline : (winner.timeline || []),
+        isOverdue: isCompletedStatus(winner.status) ? false : Boolean(winner.isOverdue)
+      });
+    }
+    return deduped;
+  }
+
   async function reloadFromIndexedDB() {
     const [recs, ovs, qItems] = await Promise.all([
       window.LedgerDB.getAllRecords(),
       window.LedgerDB.getAllOverlays(),
       window.LedgerDB.getAllQueueItems()
     ]);
-    allRecords = recs;
+    allRecords = deduplicateRecordsByUuid(recs);
     overlaysMap = new Map(ovs.map((o) => [o.trackingUuid, o]));
     queueItems = qItems;
     populateFilterOptions();
@@ -305,9 +405,30 @@
 
     if (!tbody) return;
     if (filtered.length === 0) {
-      tbody.innerHTML = rootDirHandle
-        ? '<tr><td colspan="10" class="empty-cell">No records match the current filters.</td></tr>'
-        : '<tr><td colspan="10" class="empty-cell">Click <strong>📂 Connect Team Root</strong> to index your team\'s <code>_ViewOnly_JSON/</code> mirrors into IndexedDB.</td></tr>';
+      if (!rootDirHandle && allRecords.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="10" class="empty-cell">Click <strong>📂 Connect Team Root</strong> to index your <code>Trackers/</code>, <code>Agents/</code>, or <code>View Only/</code> worksheets into IndexedDB.</td></tr>';
+      } else if (allRecords.length > 0) {
+        tbody.innerHTML = '<tr><td colspan="10" class="empty-cell">No records match the current filters.</td></tr>';
+      } else {
+        const res = lastSyncResult || {};
+        const diagParts = [
+          `Scanned <strong>${escapeHtml(rootDirHandle?.name || 'folder')}</strong> (${escapeHtml(res.connectionMode || activeConnectionMode)})`,
+          `${res.mirrorsTotal || 0} JSON mirror(s)`,
+          `${res.workbooksTotal || 0} Excel workbook(s)`
+        ];
+        if (res.workbooksFailed) diagParts.push(`${res.workbooksFailed} workbook(s) could not be read`);
+        if (res.foreignLedgerSkipped) diagParts.push(`${res.foreignLedgerSkipped} skipped due to Ledger ID mismatch`);
+
+        let adoptBtnHtml = '';
+        if (res.isTeamRoot && res.foreignLedgerSkipped > 0 && Array.isArray(res.foreignLedgerIds) && res.foreignLedgerIds.length > 0) {
+          const targetId = res.foreignLedgerIds[0];
+          adoptBtnHtml = `<div style="margin-top:0.65rem;"><button type="button" id="btnAdoptForeignLedger" class="btn-primary btn-sm" data-ledger-id="${escapeHtml(targetId)}">Adopt Existing Ledger ID (${escapeHtml(targetId.slice(0, 8))}...)</button></div>`;
+        }
+        const warnHtml = Array.isArray(res.warnings) && res.warnings.length > 0
+          ? `<div class="subtitle" style="margin-top:0.4rem;">${escapeHtml(res.warnings[0])}</div>`
+          : '';
+        tbody.innerHTML = `<tr><td colspan="10" class="empty-cell">No worksheet records found. ${diagParts.join(' • ')}.${warnHtml}${adoptBtnHtml}</td></tr>`;
+      }
       return;
     }
 
@@ -320,17 +441,18 @@
         ov.flagged ? '<span class="badge badge-overdue">🚩 Flagged</span>' : '',
         ...(ov.tags || []).map((t) => `<span class="tag-chip">${escapeHtml(t)}</span>`)
       ].filter(Boolean).join(' ');
+      const showCategorySub = r.actionCategory && r.actionCategory.toLowerCase() !== (r.requestedAction || '').toLowerCase();
 
       return `
         <tr class="${rowClass}">
-          <td><span class="badge ${getStatusBadgeClass(r)}">${escapeHtml(r.status || 'Pending')}</span></td>
+          <td><strong>${escapeHtml(r.agentName || '—')}</strong></td>
+          <td><span class="badge ${getStatusBadgeClass(r)}" title="${escapeHtml(r.status || 'Pending')}">${escapeHtml(r.status || 'Pending')}</span></td>
           <td>${tagsHtml || '<span class="subtitle">—</span>'}</td>
           <td><strong>${escapeHtml(r.subject || '(No Subject)')}</strong></td>
           <td><code>${escapeHtml(r.ticketNumber || '—')}</code></td>
           <td>${escapeHtml(r.brokerName || '—')}${r.masterNumber ? `<br><span class="subtitle">${escapeHtml(r.masterNumber)}</span>` : ''}</td>
-          <td>${escapeHtml(r.requestedAction || '—')}${r.actionCategory ? `<br><span class="subtitle">${escapeHtml(r.actionCategory)}</span>` : ''}</td>
+          <td>${escapeHtml(r.requestedAction || '—')}${showCategorySub ? `<br><span class="subtitle">${escapeHtml(r.actionCategory)}</span>` : ''}</td>
           <td>${escapeHtml(r.yardNumber || '—')}${r.lotNumbers ? `<br><span class="subtitle">${escapeHtml(r.lotNumbers)}</span>` : ''}</td>
-          <td>${escapeHtml(r.agentName || '—')}</td>
           <td>${Number(r.carryCount || 1)}d<br><span class="subtitle">${escapeHtml(r.lastSeenDate || '')}</span></td>
           <td><button type="button" class="btn-secondary btn-sm btn-inspect-rec" data-uuid="${escapeHtml(r.trackingUuid)}">Inspect / Tag</button></td>
         </tr>
@@ -437,12 +559,16 @@
     stBadge.textContent = rec.status || 'Pending';
     stBadge.className = `badge ${getStatusBadgeClass(rec)}`;
 
+    const sourceLabel = rec.sourceType === 'xlsx'
+      ? `Excel Workbook (${rec.sourceFile || rec.workbookFileName || 'xlsx'})`
+      : `JSON Mirror (${rec.sourceFile || 'mirror'})`;
     document.getElementById('detailMetaList').innerHTML = `
       <dt>Ticket #</dt><dd>${escapeHtml(rec.ticketNumber || '—')}</dd>
       <dt>Broker / Master</dt><dd>${escapeHtml(rec.brokerName || '—')} (${escapeHtml(rec.masterNumber || '—')})</dd>
       <dt>Action / Category</dt><dd>${escapeHtml(rec.requestedAction || '—')} → ${escapeHtml(rec.actionCategory || '—')}</dd>
       <dt>Yard / Lot(s)</dt><dd>${escapeHtml(rec.yardNumber || '—')} / ${escapeHtml(rec.lotNumbers || '—')}</dd>
       <dt>First → Last Seen</dt><dd>${escapeHtml(rec.firstSeenDate || '—')} → ${escapeHtml(rec.lastSeenDate || '—')} (${Number(rec.carryCount || 1)}d)</dd>
+      <dt>Source</dt><dd>${escapeHtml(sourceLabel)}</dd>
     `;
 
     const timelineEl = document.getElementById('detailTimelineList');
@@ -463,7 +589,17 @@
     document.getElementById('recordDetailModal').classList.add('open');
   }
 
-  document.getElementById('ledgerTableBody')?.addEventListener('click', (e) => {
+  document.getElementById('ledgerTableBody')?.addEventListener('click', async (e) => {
+    const adoptBtn = e.target.closest('#btnAdoptForeignLedger');
+    if (adoptBtn && adoptBtn.dataset.ledgerId && rootDirHandle) {
+      try {
+        await window.LedgerSync.adoptLedgerId(rootDirHandle, actorIdentity, adoptBtn.dataset.ledgerId);
+        await runSync({ forceFullRebuild: true });
+      } catch (err) {
+        showToast('Could not adopt Ledger ID: ' + err.message, 'danger');
+      }
+      return;
+    }
     const btn = e.target.closest('.btn-inspect-rec');
     if (btn && btn.dataset.uuid) openRecordDetailModal(btn.dataset.uuid);
   });
@@ -499,6 +635,10 @@
 
   document.getElementById('btnSaveOverlay')?.addEventListener('click', async () => {
     if (!rootDirHandle || !activeDetailTrackingUuid) return;
+    if (activeConnectionMode !== 'team-root') {
+      showToast('Connect the parent Team Root folder (e.g., Trackers/) to save _Ledger/ overlays.', 'warning');
+      return;
+    }
     try {
       await window.LedgerSync.saveActorOverlay(rootDirHandle, activeManifest, actorIdentity, activeDetailTrackingUuid, {
         tags: draftOverlayTags,
@@ -523,24 +663,52 @@
     setSyncStatus('Syncing...', 'warning');
     try {
       const res = await window.LedgerSync.syncFromTeamRoot(rootDirHandle, actorIdentity, { forceFullRebuild });
+      lastSyncResult = res;
+      activeConnectionMode = res.connectionMode || 'team-root';
       activeManifest = res.manifest;
+
       const chip = document.getElementById('ledgerBindingChip');
       if (chip) {
-        chip.textContent = `${activeManifest.ledgerName || 'Ledger'} (${activeManifest.ledgerId.slice(0, 8)}...)`;
-        chip.classList.add('bound');
+        if (res.isTeamRoot) {
+          const lid = activeManifest.ledgerId ? `${activeManifest.ledgerId.slice(0, 8)}...` : 'unbound';
+          chip.textContent = `${activeManifest.ledgerName || 'Ledger'} (${lid})`;
+          chip.title = 'Explicit Ledger Binding ID';
+          chip.classList.add('bound');
+        } else {
+          chip.textContent = `Direct Scan: ${rootDirHandle.name}`;
+          chip.title = 'Subfolder direct scan (read-only). Connect the parent Team Root folder (e.g., Trackers/) for _Ledger/ overlays and _SharedQueue/.';
+          chip.classList.remove('bound');
+        }
       }
+
       await reloadFromIndexedDB();
       document.getElementById('btnSyncNow').disabled = false;
       document.getElementById('btnExportMenu').disabled = false;
       document.getElementById('btnRebuildIdb').disabled = false;
-      document.getElementById('statusTelemetry').textContent =
-        `${res.mirrorsTotal} mirrors • ${allRecords.length} records`;
+
+      const telemetryParts = [];
+      if (res.mirrorsTotal > 0) telemetryParts.push(`${res.mirrorsTotal} mirror(s)`);
+      if (res.workbooksTotal > 0) telemetryParts.push(`${res.workbooksTotal} workbook(s)`);
+      if (telemetryParts.length === 0) telemetryParts.push('0 sources');
+      telemetryParts.push(`${allRecords.length} records`);
+      document.getElementById('statusTelemetry').textContent = telemetryParts.join(' • ');
+
       document.getElementById('statusLastSync').textContent =
         `Synced at ${new Date().toLocaleTimeString()}`;
-      setSyncStatus(`Synced: ${rootDirHandle.name}`, 'ready');
+      setSyncStatus(res.isTeamRoot ? `Synced: ${rootDirHandle.name}` : `Synced (Direct): ${rootDirHandle.name}`, 'ready');
+
       if (!silent) {
-        const msg = `Synced ${allRecords.length} record(s) (${res.mirrorsParsed} updated, ${res.mirrorsSkippedUnchanged} cached).`;
-        showToast(msg, res.foreignLedgerSkipped > 0 ? 'warning' : 'success');
+        const updatedCount = (res.mirrorsParsed || 0) + (res.workbooksParsed || 0);
+        const cachedCount = (res.mirrorsSkippedUnchanged || 0) + (res.workbooksSkippedUnchanged || 0);
+        let msg = `Synced ${allRecords.length} record(s) from ${res.mirrorsTotal || 0} mirror(s) & ${res.workbooksTotal || 0} workbook(s) (${updatedCount} updated, ${cachedCount} cached).`;
+        if (res.foreignLedgerSkipped > 0) {
+          msg += ` ${res.foreignLedgerSkipped} skipped (Ledger ID mismatch).`;
+        }
+        if (res.workbooksFailed > 0) {
+          msg += ` ${res.workbooksFailed} workbook(s) could not be read.`;
+        }
+        const hasIssues = res.foreignLedgerSkipped > 0 || res.workbooksFailed > 0;
+        showToast(msg, hasIssues ? 'warning' : 'success');
       }
     } catch (err) {
       setSyncStatus('Sync Error', 'warning');
@@ -579,7 +747,13 @@
 
   document.getElementById('btnConnectRoot')?.addEventListener('click', async () => {
     try {
-      const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
+      let handle;
+      try {
+        handle = await window.showDirectoryPicker({ mode: 'readwrite' });
+      } catch (rwErr) {
+        if (rwErr && rwErr.name === 'AbortError') throw rwErr;
+        handle = await window.showDirectoryPicker({ mode: 'read' });
+      }
       await connectTeamRootHandle(handle);
     } catch (err) {
       if (err.name !== 'AbortError') showToast(err.message, 'danger');
@@ -589,7 +763,10 @@
   document.getElementById('btnReconnectRoot')?.addEventListener('click', async () => {
     if (!cachedRootHandle) return;
     try {
-      const perm = await cachedRootHandle.requestPermission({ mode: 'readwrite' });
+      let perm = await cachedRootHandle.requestPermission({ mode: 'readwrite' }).catch(() => 'denied');
+      if (perm !== 'granted') {
+        perm = await cachedRootHandle.requestPermission({ mode: 'read' });
+      }
       if (perm === 'granted') {
         await connectTeamRootHandle(cachedRootHandle);
       }
@@ -622,6 +799,9 @@
   const qPostForm = document.getElementById('queuePostForm');
   document.getElementById('btnToggleQueuePostForm')?.addEventListener('click', () => {
     if (!rootDirHandle) return showToast('Connect Team Root first.', 'warning');
+    if (activeConnectionMode !== 'team-root') {
+      return showToast('Connect the parent Team Root folder (e.g., Trackers/) to post tickets to _SharedQueue/.', 'warning');
+    }
     qPostForm.style.display = qPostForm.style.display === 'none' ? 'block' : 'none';
   });
   document.getElementById('btnCancelQueuePost')?.addEventListener('click', () => {
@@ -631,6 +811,10 @@
   qPostForm?.addEventListener('submit', async (e) => {
     e.preventDefault();
     if (!rootDirHandle) return;
+    if (activeConnectionMode !== 'team-root') {
+      showToast('Connect the parent Team Root folder (e.g., Trackers/) to post tickets to _SharedQueue/.', 'warning');
+      return;
+    }
     try {
       await window.LedgerSync.publishSharedQueueItem(rootDirHandle, activeManifest, actorIdentity, {
         subject: document.getElementById('qSubject').value,

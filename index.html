@@ -3,13 +3,13 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>LedgerUI v1.0.0</title>
+  <title>LedgerUI v1.1.2</title>
   <meta name="theme-color" id="metaThemeColor" content="#0f172a">
   <meta name="description" content="Local-first IndexedDB + JSON store team ledger, shared queue coordinator, and CSV/XLSX exporter">
   <link rel="manifest" href="manifest.json">
   <link rel="icon" type="image/svg+xml" href="assets/icons/icon.svg">
   <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
-  <link rel="stylesheet" href="css/styles.css?v=1.0.0">
+  <link rel="stylesheet" href="css/styles.css?v=1.1.2">
 </head>
 <body>
 
@@ -23,7 +23,7 @@
         </svg>
       </div>
       <h1>LedgerUI</h1>
-      <span class="version-tag" id="appVersionTag">v1.0.0</span>
+      <span class="version-tag" id="appVersionTag">v1.1.2</span>
       <span class="ledger-binding-chip" id="ledgerBindingChip" title="Explicit Ledger Binding ID">No Ledger Connected</span>
     </div>
 
@@ -34,7 +34,7 @@
       <button type="button" id="btnConnectRoot" class="btn-primary">
         📂 Connect Team Root
       </button>
-      <button type="button" id="btnSyncNow" class="btn-secondary" disabled title="Scan _ViewOnly_JSON/, _SharedQueue/, and _Ledger/ incrementally">
+      <button type="button" id="btnSyncNow" class="btn-secondary" disabled title="Scan _ViewOnly_JSON/ mirrors and Agents/ or View Only/ Excel workbooks incrementally">
         🔄 Sync Now
       </button>
 
@@ -157,6 +157,7 @@
       <table>
         <thead id="ledgerTableHead">
           <tr>
+            <th data-sort="agentName" class="sortable">Agent</th>
             <th data-sort="status" class="sortable">Status</th>
             <th>Tags / Flag</th>
             <th data-sort="subject" class="sortable">Subject</th>
@@ -164,13 +165,12 @@
             <th data-sort="brokerName" class="sortable">Broker / Master #</th>
             <th data-sort="actionCategory" class="sortable">Action &amp; Category</th>
             <th>Yard / Lots</th>
-            <th data-sort="agentName" class="sortable">Agent</th>
             <th data-sort="lastSeenDate" class="sortable">Carries / Last Seen</th>
             <th>Details</th>
           </tr>
         </thead>
         <tbody id="ledgerTableBody">
-          <tr><td colspan="10" class="empty-cell">Click <strong>📂 Connect Team Root</strong> to index your team's <code>_ViewOnly_JSON/</code> mirrors into IndexedDB.</td></tr>
+          <tr><td colspan="10" class="empty-cell">Click <strong>📂 Connect Team Root</strong> to index your <code>Trackers/</code>, <code>Agents/</code>, or <code>View Only/</code> worksheets into IndexedDB.</td></tr>
         </tbody>
       </table>
     </div>
@@ -345,13 +345,14 @@
     <div class="status-right">
       <span id="statusLastSync" class="status-meta">Waiting for Team Root...</span>
       <span class="status-divider">•</span>
-      <span class="status-meta">LedgerUI v1.0.0</span>
+      <span class="status-meta">LedgerUI v1.1.2</span>
     </div>
   </footer>
 
-  <script src="js/db.js?v=1.0.0"></script>
-  <script src="js/sync-engine.js?v=1.0.0"></script>
-  <script src="js/exporter.js?v=1.0.0"></script>
-  <script src="js/app.js?v=1.0.0"></script>
+  <script src="js/db.js?v=1.1.2"></script>
+  <script src="js/xlsx-parser.js?v=1.1.2"></script>
+  <script src="js/sync-engine.js?v=1.1.2"></script>
+  <script src="js/exporter.js?v=1.1.2"></script>
+  <script src="js/app.js?v=1.1.2"></script>
 </body>
 </html>

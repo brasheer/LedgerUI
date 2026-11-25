@@ -457,6 +457,13 @@ tr.row-completed { background: var(--success-soft); }
   white-space: nowrap;
 }
 
+#ledgerTableBody .badge {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+
 .badge-complete { background: var(--success-soft); color: var(--success); border-color: var(--success); }
 .badge-overdue { background: var(--danger-soft); color: var(--danger); border-color: var(--danger); }
 .badge-waiting { background: var(--waiting-soft); color: var(--waiting); border-color: var(--waiting); }
